@@ -65,11 +65,13 @@ why the deck is seeded from a curated list in the repo rather than pulled live.
 Pushing to `main` (or the current demo branch) builds the app and publishes it to
 GitHub Pages via `.github/workflows/deploy-pages.yml`.
 
-One-time setup in the repository settings:
+The workflow enables Pages itself on its first successful run (`enablement: true`
+on `actions/configure-pages`), so there is no manual setup. If that step is ever
+rejected because the token cannot change repository settings, turn it on by hand
+under **Settings → Pages → Build and deployment → Source: GitHub Actions**.
 
-1. **Settings → Pages → Build and deployment → Source: GitHub Actions.**
-2. Optional: **Settings → Secrets and variables → Actions → New repository secret**,
-   named `OMDB_API_KEY`. With it set, the deploy bakes in real posters.
+Optional: add a repository secret named `OMDB_API_KEY` under **Settings → Secrets
+and variables → Actions**. With it set, the deploy bakes in real posters.
 
 The demo then lives at `https://<owner>.github.io/flickpick/`. The workflow passes
 `BASE_PATH=/flickpick` so all links and assets resolve under that subpath.
