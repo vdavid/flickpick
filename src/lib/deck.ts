@@ -20,7 +20,7 @@ const SHORTLIST_SHARE = 0.35;
  *  Without this the deck collapses into one director within a dozen swipes. */
 const WILDCARD_SHARE = 0.22;
 /** How hard to punish a candidate for resembling something already in the deck. */
-const DIVERSITY = 0.55;
+const DIVERSITY = 0.9;
 /** Sampling width among the best remaining candidates. 1 would be pure greedy. */
 const SAMPLE_TOP = 5;
 
@@ -28,10 +28,20 @@ function featureSet(title: Title): Set<string> {
 	return new Set(catalog.featuresFor(title.id));
 }
 
-function jaccard(a: Set<string>, b: Set<string>): number {
+/** Jaccard overlap, but each shared feature counts by how rare it is. Two films
+ *  sharing a lead actor are far more alike than two films that are both Dramas,
+ *  and unweighted overlap cannot tell those apart — which is how a deck ends up
+ *  showing four films by the same actor in a row. */
+function similarity(a: Set<string>, b: Set<string>): number {
 	let shared = 0;
-	for (const value of a) if (b.has(value)) shared++;
-	return shared / (a.size + b.size - shared || 1);
+	let total = 0;
+	for (const f of a) {
+		const weight = Math.max(0, catalog.idf(f));
+		total += weight;
+		if (b.has(f)) shared += weight;
+	}
+	for (const f of b) if (!a.has(f)) total += Math.max(0, catalog.idf(f));
+	return total > 0 ? shared / total : 0;
 }
 
 function medianQuality(rows: { title: Title }[]): number {
@@ -117,7 +127,7 @@ export function buildDeck(entries: Library, profile: Profile, options: DeckOptio
 			.map((entry) => {
 				const features = featureSet(entry.title);
 				let closest = 0;
-				for (const other of pickedFeatures) closest = Math.max(closest, jaccard(features, other));
+				for (const other of pickedFeatures) closest = Math.max(closest, similarity(features, other));
 				return { entry, value: entry.score - DIVERSITY * closest };
 			})
 			.sort((a, b) => b.value - a.value);

@@ -89,7 +89,7 @@
 			{#each picks.slice(0, 25) as pick (pick.title.id)}
 				<TitleRow
 					title={pick.title}
-					note={reasonText(pick.reasons) || pick.title.blurb}
+					note={reasonText(pick.reasons) || catalog.blurb(pick.title.id)}
 					noteTone={pick.reasons.length ? 'accent' : 'muted'}
 				>
 					{#snippet actions()}

@@ -5,7 +5,10 @@ import type { Entry, Library, Title } from './types';
 /** How much one library entry pushes its features around.
  *  A star rating is the strongest evidence; a swipe is a hint. */
 export function entryWeight(e: Entry): number {
-	if (e.verdict === 'seen') return e.rating ? (e.rating - 3) / 2 : 0.25;
+	// A skip is explicitly "no opinion" — it must not tilt the profile either way.
+	if (e.verdict === 'skipped') return 0;
+	// 10 maps to +1, 5.5 to 0, 1 to -1.
+	if (e.verdict === 'seen') return e.rating ? (e.rating - 5.5) / 4.5 : 0.25;
 	if (e.verdict === 'watchlist') return 0.5;
 	// "Never" is a real veto; a plain left swipe often just means "not tonight".
 	return e.never ? -1.2 : -0.35;
@@ -17,9 +20,10 @@ function labelOfEntry(e: Entry): 0 | 1 | null {
 	if (e.verdict === 'watchlist') return 1;
 	if (e.verdict === 'dismissed') return 0;
 	if (e.verdict === 'seen' && e.rating) {
-		if (e.rating >= 4) return 1;
-		if (e.rating <= 2) return 0;
+		if (e.rating >= 7) return 1;
+		if (e.rating <= 4) return 0;
 	}
+	// Skips, 5-6 ratings and unrated "seen" say nothing either way.
 	return null;
 }
 

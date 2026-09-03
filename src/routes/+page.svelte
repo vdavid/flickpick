@@ -76,7 +76,8 @@
 		const map: Record<string, Verdict> = {
 			ArrowLeft: 'dismissed',
 			ArrowRight: 'watchlist',
-			ArrowUp: 'seen'
+			ArrowUp: 'seen',
+			ArrowDown: 'skipped'
 		};
 		const verdict = map[event.key];
 		if (verdict) {
@@ -88,13 +89,13 @@
 		}
 	}
 
-	let verdictWord = $derived(
-		last?.verdict === 'watchlist'
-			? 'Watchlisted'
-			: last?.verdict === 'seen'
-				? 'Marked seen'
-				: 'Buried'
-	);
+	const VERDICT_WORDS: Record<Verdict, string> = {
+		watchlist: 'Watchlisted',
+		seen: 'Marked seen',
+		dismissed: 'Buried',
+		skipped: 'Skipped'
+	};
+	let verdictWord = $derived(last ? VERDICT_WORDS[last.verdict] : '');
 </script>
 
 <svelte:window onkeydown={onKeydown} />
@@ -137,6 +138,9 @@
 			<button class="act nope" onclick={() => cards[0]?.fling('dismissed')} aria-label="Not interested" disabled={!queue.length}>
 				<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></svg>
 			</button>
+			<button class="act skip" onclick={() => cards[0]?.fling('skipped')} aria-label="Skip, no opinion" disabled={!queue.length}>
+				<svg viewBox="0 0 24 24"><path d="M12 5v13M7 13l5 5 5-5" /></svg>
+			</button>
 			<button class="act seen" onclick={() => cards[0]?.fling('seen')} aria-label="Already seen it" disabled={!queue.length}>
 				<svg viewBox="0 0 24 24"><path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6-10-6-10-6z" /><circle cx="12" cy="12" r="2.6" /></svg>
 			</button>
@@ -159,6 +163,7 @@
 			<p class="legend">
 				<span style:color="var(--nope)">← Not for me</span>
 				<span style:color="var(--seen)">↑ Seen it</span>
+				<span style:color="var(--muted)">↓ Skip</span>
 				<span style:color="var(--want)">Watchlist →</span>
 			</p>
 		{/if}
@@ -249,7 +254,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		gap: 18px;
+		gap: 14px;
 		padding-bottom: 8px;
 	}
 
@@ -288,6 +293,17 @@
 		color: var(--nope);
 	}
 
+	.act.skip {
+		width: 46px;
+		height: 46px;
+		color: var(--muted);
+	}
+
+	.act.skip svg {
+		width: 20px;
+		height: 20px;
+	}
+
 	.act.seen {
 		color: var(--seen);
 	}
@@ -301,11 +317,12 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		gap: 10px;
+		gap: 8px;
 		min-height: 30px;
-		margin: 0 4px 6px;
-		font-size: 11px;
+		margin: 0 2px 6px;
+		font-size: 10.5px;
 		font-weight: 600;
+		white-space: nowrap;
 	}
 
 	.lastbar .what {

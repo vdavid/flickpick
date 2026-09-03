@@ -25,6 +25,9 @@ import { dirname, join } from 'node:path';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = join(ROOT, 'static', 'catalog.json');
+// Overviews are over half the payload and are not needed to rank anything, so they
+// ship separately and load in the background once the app is already usable.
+const OUT_BLURBS = join(ROOT, 'static', 'blurbs.json');
 
 const TOKEN = process.env.TMDB_READ_ACCESS_TOKEN;
 const API_KEY = process.env.TMDB_API_KEY;
@@ -281,10 +284,11 @@ const titles = rows.map((t) => ({
 	d: t.directorNames.slice(0, 2).map((p) => intern(people, personIndex, p)),
 	c: t.castNames.map((p) => intern(people, personIndex, p)),
 	p: t.p,
-	o: t.o,
 	r: t.r,
 	v: t.v
 }));
+
+const blurbs = Object.fromEntries(rows.filter((t) => t.o).map((t) => [t.i, t.o]));
 
 const catalog = {
 	version: 2,
@@ -298,6 +302,8 @@ const catalog = {
 await mkdir(dirname(OUT), { recursive: true });
 const json = JSON.stringify(catalog);
 await writeFile(OUT, json);
+const blurbJson = JSON.stringify(blurbs);
+await writeFile(OUT_BLURBS, blurbJson);
 
 console.log(
 	`\nWrote ${titles.length} titles (${titles.filter((t) => t.k === 0).length} films, ` +
@@ -305,7 +311,8 @@ console.log(
 		`${people.length} people.`
 );
 console.log(
-	`${(Buffer.byteLength(json) / 1024 / 1024).toFixed(2)} MB, ` +
+	`catalog.json ${(Buffer.byteLength(json) / 1024 / 1024).toFixed(2)} MB, ` +
+		`blurbs.json ${(Buffer.byteLength(blurbJson) / 1024 / 1024).toFixed(2)} MB, ` +
 		`${titles.filter((t) => t.p).length} with posters, ${titles.filter((t) => t.c.length).length} with cast.`
 );
 console.log(

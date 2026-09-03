@@ -22,7 +22,6 @@ function unpack(packed: PackedTitle, file: CatalogFile, meanRating: number): Tit
 		genres: packed.g.map((i) => file.genres[i]).filter(Boolean),
 		directors: packed.d.map((i) => file.people[i]).filter(Boolean),
 		cast: packed.c.map((i) => file.people[i]).filter(Boolean),
-		blurb: packed.o,
 		posterPath: packed.p,
 		voteAverage: packed.r,
 		voteCount: votes,
@@ -59,6 +58,9 @@ export class CatalogStore {
 	generatedAt = $state<string | null>(null);
 	source = $state<string | null>(null);
 
+	/** Overviews arrive separately, after the app is already interactive. */
+	blurbs = $state<Record<string, string>>({});
+
 	byId = new Map<string, Title>();
 	features = new Map<string, Feature[]>();
 	#idf = new Map<Feature, number>();
@@ -67,6 +69,10 @@ export class CatalogStore {
 	 *  is a real signal, both being a Drama is almost none. */
 	idf(feature: Feature): number {
 		return this.#idf.get(feature) ?? Math.log(this.titles.length || 2);
+	}
+
+	blurb(id: string): string {
+		return this.blurbs[id] ?? '';
 	}
 
 	async load(fetcher: typeof fetch = fetch) {
@@ -81,6 +87,19 @@ export class CatalogStore {
 		} catch (error) {
 			this.error = error instanceof Error ? error.message : String(error);
 			this.status = 'error';
+			return;
+		}
+		// Deliberately not awaited: overviews are nice to have, and the deck is
+		// perfectly usable while they are still in flight.
+		void this.#loadBlurbs(fetcher);
+	}
+
+	async #loadBlurbs(fetcher: typeof fetch) {
+		try {
+			const res = await fetcher(`${base}/blurbs.json`);
+			if (res.ok) this.blurbs = (await res.json()) as Record<string, string>;
+		} catch {
+			// Cards simply show credits and genres instead.
 		}
 	}
 

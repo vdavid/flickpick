@@ -1,15 +1,26 @@
 import { browser } from '$app/environment';
 import type { Entry, Library, Verdict } from './types';
 
-const STORAGE_KEY = 'flickpick.library.v1';
+const STORAGE_KEY = 'flickpick.library.v2';
+/** v1 rated out of 5. v2 rates out of 10, so old entries are doubled on the way in. */
+const LEGACY_KEY = 'flickpick.library.v1';
 
 function load(): Library {
 	if (!browser) return {};
 	try {
 		const raw = localStorage.getItem(STORAGE_KEY);
-		if (!raw) return {};
-		const parsed = JSON.parse(raw) as Library;
-		return typeof parsed === 'object' && parsed !== null ? parsed : {};
+		if (raw) {
+			const parsed = JSON.parse(raw) as Library;
+			return typeof parsed === 'object' && parsed !== null ? parsed : {};
+		}
+		const legacy = localStorage.getItem(LEGACY_KEY);
+		if (!legacy) return {};
+		const parsed = JSON.parse(legacy) as Library;
+		if (typeof parsed !== 'object' || parsed === null) return {};
+		for (const entry of Object.values(parsed)) {
+			if (entry.rating) entry.rating = Math.min(10, entry.rating * 2);
+		}
+		return parsed;
 	} catch {
 		return {};
 	}
@@ -84,8 +95,9 @@ class LibraryStore {
 			.sort((a, b) => b.updatedAt - a.updatedAt);
 	}
 
+	/** Skips are not a verdict, so they don't count as progress through the catalog. */
 	get decided(): number {
-		return Object.keys(this.entries).length;
+		return Object.values(this.entries).filter((e) => e.verdict !== 'skipped').length;
 	}
 
 	get unratedSeen(): Entry[] {

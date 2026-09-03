@@ -1,6 +1,6 @@
 <script lang="ts">
 	import Poster from './Poster.svelte';
-	import { yearLabel } from '$lib/catalog.svelte';
+	import { catalog, yearLabel } from '$lib/catalog.svelte';
 	import type { Title, Verdict } from '$lib/types';
 	import type { Reason } from '$lib/taste';
 
@@ -33,8 +33,12 @@
 	/** Which verdict the current drag is aiming at, and how committed it is (0-1). */
 	let intent = $derived.by((): { verdict: Verdict; progress: number } | null => {
 		if (dx === 0 && dy === 0) return null;
-		if (dy < 0 && Math.abs(dy) > Math.abs(dx)) {
-			return { verdict: 'seen', progress: Math.min(1, -dy / THRESHOLD) };
+		if (Math.abs(dy) > Math.abs(dx)) {
+			// Up is "seen it", down is "skip this one, no opinion".
+			return {
+				verdict: dy < 0 ? 'seen' : 'skipped',
+				progress: Math.min(1, Math.abs(dy) / THRESHOLD)
+			};
 		}
 		if (Math.abs(dx) < 4) return null;
 		return {
@@ -75,8 +79,8 @@
 	export function fling(verdict: Verdict) {
 		if (flying) return;
 		flying = true;
-		if (verdict === 'seen') {
-			dy = -window.innerHeight;
+		if (verdict === 'seen' || verdict === 'skipped') {
+			dy = (verdict === 'seen' ? -1 : 1) * window.innerHeight;
 			dx = 0;
 		} else {
 			dx = (verdict === 'watchlist' ? 1 : -1) * window.innerWidth * 1.2;
@@ -107,7 +111,7 @@
 
 	{#if intent}
 		<div class="stamp {intent.verdict}" style:opacity={intent.progress}>
-			{#if intent.verdict === 'seen'}Seen it{:else if intent.verdict === 'watchlist'}Watchlist{:else}Not for me{/if}
+			{#if intent.verdict === 'seen'}Seen it{:else if intent.verdict === 'watchlist'}Watchlist{:else if intent.verdict === 'skipped'}Skip{:else}Not for me{/if}
 		</div>
 	{/if}
 
@@ -121,16 +125,19 @@
 			{/each}
 		</div>
 		<h2>{title.title}</h2>
-		<p class="blurb">{title.blurb}</p>
+		{#if catalog.blurb(title.id)}
+			<p class="blurb">{catalog.blurb(title.id)}</p>
+		{/if}
 		<p class="credit">
 			{[title.directors.join(', '), title.cast.slice(0, 2).join(', ')].filter(Boolean).join(' · ')}
 		</p>
 		{#if reasons.length}
 			<p class="why">
-				{#each reasons as reason, i}
-					{i > 0 ? ' · ' : ''}<strong>{reason.label}</strong>{#if reason.because}
-						from {reason.because}{/if}
-				{/each}
+				{#each reasons as reason, i}<span
+						>{i > 0 ? ' · ' : ''}<strong>{reason.label}</strong>{reason.because
+							? ` from ${reason.because}`
+							: ''}</span
+					>{/each}
 			</p>
 		{/if}
 	</div>
@@ -200,6 +207,11 @@
 	}
 
 	.blurb {
+		display: -webkit-box;
+		-webkit-box-orient: vertical;
+		-webkit-line-clamp: 3;
+		line-clamp: 3;
+		overflow: hidden;
 		margin: 7px 0 0;
 		font-size: 14px;
 		line-height: 1.4;
@@ -218,6 +230,11 @@
 	}
 
 	.why {
+		display: -webkit-box;
+		-webkit-box-orient: vertical;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		overflow: hidden;
 		margin: 9px 0 0;
 		font-size: 12px;
 		color: var(--want);
@@ -258,5 +275,12 @@
 		left: 50%;
 		translate: -50% 0;
 		color: var(--seen);
+	}
+
+	/* A skip travels downward, so its stamp sits at the top where it stays visible. */
+	.stamp.skipped {
+		left: 50%;
+		translate: -50% 0;
+		color: var(--muted);
 	}
 </style>

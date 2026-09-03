@@ -42,14 +42,14 @@
 			{#each items as item (item.entry.id)}
 				<TitleRow
 					title={item.title!}
-					note={item.entry.never ? "Never show this again" : item.title!.blurb}
+					note={item.entry.never ? "Never show this again" : catalog.blurb(item.title!.id)}
 				>
 					{#snippet trailing()}
 						{#if tab === 'seen'}
 							<div class="row-stars">
 								<StarRating
 									value={item.entry.rating ?? 0}
-									size={18}
+									size={15}
 									label="Rating for {item.title!.title}"
 									onchange={(rating) => library.rate(item.entry.id, rating)}
 								/>

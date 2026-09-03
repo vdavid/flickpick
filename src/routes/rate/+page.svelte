@@ -26,6 +26,33 @@
 
 	let current = $derived(toRate[0]);
 
+	/** The tap has to be visible before the card moves on: the previous version
+	 *  committed instantly, so the stars snapped back to empty for the next title
+	 *  and you never saw what you had picked. */
+	const CONFIRM_MS = 600;
+	let pending = $state<{ id: string; rating: number } | null>(null);
+	let pendingTimer: ReturnType<typeof setTimeout> | null = null;
+
+	let shownRating = $derived(pending && current && pending.id === current.id ? pending.rating : 0);
+
+	function rateCurrent(id: string, rating: number) {
+		if (pendingTimer) clearTimeout(pendingTimer);
+		pending = { id, rating };
+		pendingTimer = setTimeout(() => {
+			library.rate(id, rating);
+			pending = null;
+			pendingTimer = null;
+		}, CONFIRM_MS);
+	}
+
+	/** Leaving the page mid-confirmation must not silently drop the rating. */
+	$effect(() => () => {
+		if (pendingTimer) {
+			clearTimeout(pendingTimer);
+			if (pending) library.rate(pending.id, pending.rating);
+		}
+	});
+
 	let results = $derived.by(() => {
 		const q = query.trim().toLowerCase();
 		if (q.length < 2) return [];
@@ -88,11 +115,15 @@
 				<h2>{current.title}</h2>
 				<p class="sub">{yearLabel(current)} · {current.genres.slice(0, 3).join(', ')}</p>
 				<StarRating
-					value={0}
-					size={40}
+					value={shownRating}
+					size={26}
+					showValue
 					label="Rate {current.title}"
-					onchange={(rating) => library.rate(current.id, rating)}
+					onchange={(rating) => rateCurrent(current.id, rating)}
 				/>
+				<p class="confirm" class:show={shownRating > 0}>
+					{shownRating > 0 ? 'Saved ✓' : 'Tap a star'}
+				</p>
 				<button class="skip" onclick={() => library.set(current.id, 'watchlist')}>
 					Haven't actually seen it → watchlist
 				</button>
@@ -114,7 +145,7 @@
 						<div class="row-stars">
 							<StarRating
 								value={item.rating}
-								size={20}
+								size={15}
 								label="Rating for {item.title!.title}"
 								onchange={(rating) => library.rate(item.title!.id, rating)}
 							/>
@@ -232,6 +263,21 @@
 		margin: 0 0 6px;
 		font-size: 13px;
 		color: var(--muted);
+	}
+
+	.confirm {
+		margin: 0;
+		min-height: 18px;
+		color: var(--muted);
+		font-size: 13px;
+		font-weight: 600;
+		opacity: 0;
+		transition: opacity 120ms;
+	}
+
+	.confirm.show {
+		color: var(--seen);
+		opacity: 1;
 	}
 
 	.skip {

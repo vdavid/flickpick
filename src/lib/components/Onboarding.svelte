@@ -50,7 +50,8 @@
 	}
 
 	function start() {
-		for (const id of picked) library.rate(id, 5);
+		// These are "I loved this" answers, so they go in at the top of the 1-10 scale.
+		for (const id of picked) library.rate(id, 10);
 		onDone();
 	}
 </script>

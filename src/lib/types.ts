@@ -28,7 +28,6 @@ export interface PackedTitle {
 	c: number[];
 	/** TMDB poster path, e.g. "/abc123.jpg". Null when TMDB has no art. */
 	p: string | null;
-	o: string;
 	/** TMDB vote average (0-10) and vote count. */
 	r: number;
 	v: number;
@@ -44,7 +43,6 @@ export interface Title {
 	genres: string[];
 	directors: string[];
 	cast: string[];
-	blurb: string;
 	posterPath: string | null;
 	voteAverage: number;
 	voteCount: number;
@@ -52,12 +50,14 @@ export interface Title {
 	quality: number;
 }
 
-export type Verdict = 'seen' | 'watchlist' | 'dismissed';
+/** `skipped` means "not now, and don't read anything into it": it takes the card
+ *  off the deck without feeding the taste model. */
+export type Verdict = 'seen' | 'watchlist' | 'dismissed' | 'skipped';
 
 export interface Entry {
 	id: string;
 	verdict: Verdict;
-	/** 1-5 stars, only meaningful for `seen`. */
+	/** 1-10 stars, only meaningful for `seen`. */
 	rating?: number;
 	/** A hard "never show me this kind of thing again", set from the swipe bar. */
 	never?: boolean;
