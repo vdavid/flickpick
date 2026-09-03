@@ -65,10 +65,15 @@ why the deck is seeded from a curated list in the repo rather than pulled live.
 Pushing to `main` (or the current demo branch) builds the app and publishes it to
 GitHub Pages via `.github/workflows/deploy-pages.yml`.
 
-The workflow enables Pages itself on its first successful run (`enablement: true`
-on `actions/configure-pages`), so there is no manual setup. If that step is ever
-rejected because the token cannot change repository settings, turn it on by hand
-under **Settings → Pages → Build and deployment → Source: GitHub Actions**.
+**One-time setup, needed once before the first deploy can succeed:**
+
+**Settings → Pages → Build and deployment → Source: GitHub Actions.**
+
+This cannot be automated. The workflow does pass `enablement: true` to
+`actions/configure-pages`, but creating a Pages site needs `administration: write`
+and `GITHUB_TOKEN` cannot be granted that scope, so the step fails with
+`Resource not accessible by integration` until the switch is flipped by hand.
+Once Pages is on, that step becomes a no-op and every push deploys.
 
 Optional: add a repository secret named `OMDB_API_KEY` under **Settings → Secrets
 and variables → Actions**. With it set, the deploy bakes in real posters.
