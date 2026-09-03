@@ -50,8 +50,9 @@
 	}
 
 	function start() {
-		// These are "I loved this" answers, so they go in at the top of the 1-10 scale.
-		for (const id of picked) library.rate(id, 10);
+		// Treated as 10/10 so the picks are useful immediately, but left on the
+		// to-rate pile: "I loved this" is not the same as an actual score.
+		for (const id of picked) library.seedRating(id, 10);
 		onDone();
 	}
 </script>
@@ -59,7 +60,10 @@
 <div class="onboarding">
 	<header>
 		<h1>Which of these did you <em>love</em>?</h1>
-		<p>Tap any you'd happily rewatch. This is what the picks are built from.</p>
+		<p>
+			Tap any you'd happily rewatch. They seed your recommendations right away, and stay on
+			your Rate list so you can score them properly later.
+		</p>
 	</header>
 
 	<div class="grid">

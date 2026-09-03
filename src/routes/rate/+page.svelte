@@ -11,20 +11,21 @@
 	let toRate = $derived(
 		library
 			.list('seen')
-			.filter((e) => !e.rating)
-			.map((e) => catalog.byId.get(e.id))
-			.filter((t) => t !== undefined)
+			.filter((e) => !e.rating || e.provisional)
+			.map((e) => ({ title: catalog.byId.get(e.id), assumed: e.provisional ? e.rating : undefined }))
+			.filter((r) => r.title !== undefined)
 	);
 
 	let rated = $derived(
 		library
 			.list('seen')
-			.filter((e) => e.rating)
+			.filter((e) => e.rating && !e.provisional)
 			.map((e) => ({ title: catalog.byId.get(e.id), rating: e.rating! }))
 			.filter((r) => r.title !== undefined)
 	);
 
-	let current = $derived(toRate[0]);
+	let current = $derived(toRate[0]?.title);
+	let assumed = $derived(toRate[0]?.assumed);
 
 	/** The tap has to be visible before the card moves on: the previous version
 	 *  committed instantly, so the stars snapped back to empty for the next title
@@ -52,6 +53,10 @@
 			if (pending) library.rate(pending.id, pending.rating);
 		}
 	});
+
+	function formatVotes(votes: number): string {
+		return votes >= 1000 ? `${Math.round(votes / 1000)}k` : String(votes);
+	}
 
 	let results = $derived.by(() => {
 		const q = query.trim().toLowerCase();
@@ -114,6 +119,12 @@
 				<div class="art"><Poster title={current} eager /></div>
 				<h2>{current.title}</h2>
 				<p class="sub">{yearLabel(current)} · {current.genres.slice(0, 3).join(', ')}</p>
+				{#if current.imdbRating}
+					<p class="imdb">
+						<b>IMDb {current.imdbRating.toFixed(1)}</b>
+						{#if current.imdbVotes}<span>{formatVotes(current.imdbVotes)} votes</span>{/if}
+					</p>
+				{/if}
 				<StarRating
 					value={shownRating}
 					size={26}
@@ -121,8 +132,14 @@
 					label="Rate {current.title}"
 					onchange={(rating) => rateCurrent(current.id, rating)}
 				/>
-				<p class="confirm" class:show={shownRating > 0}>
-					{shownRating > 0 ? 'Saved ✓' : 'Tap a star'}
+				<p class="confirm" class:show={shownRating > 0 || assumed !== undefined}>
+					{#if shownRating > 0}
+						Saved ✓
+					{:else if assumed !== undefined}
+						Counted as {assumed}/10 for now — score it properly
+					{:else}
+						Tap a star
+					{/if}
 				</p>
 				<button class="skip" onclick={() => library.set(current.id, 'watchlist')}>
 					Haven't actually seen it → watchlist
@@ -246,7 +263,7 @@
 	}
 
 	.art {
-		width: min(56vw, 220px);
+		width: min(46vw, 185px);
 		aspect-ratio: 2 / 3;
 		border-radius: var(--radius);
 		overflow: hidden;
@@ -263,6 +280,25 @@
 		margin: 0 0 6px;
 		font-size: 13px;
 		color: var(--muted);
+	}
+
+	.imdb {
+		display: flex;
+		align-items: center;
+		gap: 7px;
+		margin: -2px 0 4px;
+		font-size: 13px;
+		color: var(--muted);
+	}
+
+	.imdb b {
+		padding: 2px 7px;
+		border-radius: 5px;
+		background: #f5c518;
+		color: #111;
+		font-size: 12px;
+		font-weight: 800;
+		letter-spacing: 0.01em;
 	}
 
 	.confirm {

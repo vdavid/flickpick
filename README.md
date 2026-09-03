@@ -50,6 +50,13 @@ better popularity proxy than vote average, which floats obscure titles with nine
 10/10 votes to the top), then fetches each one's details and credits so the
 recommender has directors and cast to work with.
 
+A third pass joins IMDb's own ratings on, shown on the Rate screen. TMDB hands us
+each title's IMDb id and IMDb publishes ratings as a bulk dataset, so this needs
+one download and no extra per-title requests. It is best-effort: if the download
+fails the build carries on without IMDb scores. Note that **IMDb licenses that
+dataset for non-commercial use only** — set `CATALOG_SKIP_IMDB=1` to leave it
+out.
+
 The file interns genre and person names into shared tables and refers to them by
 index, which roughly halves the payload. The app fetches it at runtime rather
 than bundling it, so the shell paints before the catalog arrives.
@@ -71,10 +78,11 @@ serves posters from a free CDN.
 Everything is content-based and runs in the browser — no server, no shared data,
 and it works from a handful of ratings.
 
-**The signals.** Each library entry carries a weight: a 5★ rating is `+1`, 3★ is
-`0`, 1★ is `-1`, a watchlist swipe `+0.5`, a plain "seen" `+0.25`. A left swipe is
-only `-0.35`, because it usually means "not tonight"; the **Never again** button
-on the swipe bar turns it into a real `-1.2` veto.
+**The signals.** Each library entry carries a weight: a 10/10 rating is `+1`,
+5-6 is around `0`, 1/10 is `-1`, a watchlist swipe `+0.5`, a plain "seen" `+0.25`.
+A left swipe is only `-0.35`, because it usually means "not tonight"; the **Never
+again** button on the swipe bar turns it into a real `-1.2` veto. Swiping down
+skips a title at weight `0` — explicitly no opinion.
 
 **The features.** Each weight spreads across the title's genres, directors,
 top-billed cast and decade, damped by how common each feature is across the whole
@@ -104,6 +112,9 @@ sensible order to start from.
 
 New users get a "which of these did you love?" grid instead of swiping blind, so
 the model starts with real positives rather than only learning from rejections.
+Those answers go in as **provisional 10s**: they steer the picks immediately, but
+the titles stay on the Rate list until the user gives them a real score, because
+"I loved this" is not the same as "this is a ten".
 
 ## Layout
 
@@ -113,6 +124,7 @@ scripts/build-catalog.mjs    TMDB -> catalog.json
 src/lib/catalog.svelte.ts    loading, unpacking, and the feature index
 src/lib/taste.ts             taste profile, the learned weights, explanations
 src/lib/deck.ts              exploration, diversity, wildcards
+scripts/lib/imdb-ratings.mjs joins IMDb's ratings dump onto the catalog
 src/lib/library.svelte.ts    the user's library — the one module a backend would replace
 src/lib/components/          SwipeCard, Poster, TitleRow, StarRating, TabBar, Onboarding
 src/routes/                  Discover (/), Rate, Lists, For You

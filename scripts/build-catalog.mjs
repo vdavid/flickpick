@@ -13,6 +13,11 @@
  * time, the catalog is still complete and only loses cast and director on the
  * titles it did not reach, instead of losing everything.
  *
+ * A third pass joins IMDb's own ratings on. TMDB hands us each title's IMDb id,
+ * and IMDb publishes ratings as a downloadable dataset, so this needs no extra
+ * per-title requests. It is best-effort: if the download fails the build carries
+ * on without IMDb scores. That dataset is licensed for non-commercial use only.
+ *
  * Size knobs: CATALOG_MOVIES, CATALOG_SERIES, and CATALOG_CREDITS to cap how
  * many titles get credits (default: all of them).
  *
@@ -22,6 +27,7 @@
 import { writeFile, mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { addImdbRatings, IMDB_RATINGS_URL } from './lib/imdb-ratings.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = join(ROOT, 'static', 'catalog.json');
@@ -51,6 +57,7 @@ const DEADLINE_MS = Number(process.env.CATALOG_DEADLINE_MS ?? 18 * 60 * 1000);
 /** Below this many votes a title is too obscure to be worth a swipe. */
 const MIN_VOTES = 200;
 const CAST_KEPT = 4;
+const SKIP_IMDB = process.env.CATALOG_SKIP_IMDB === '1';
 
 if (!TOKEN && !API_KEY) {
 	console.error('Set TMDB_READ_ACCESS_TOKEN (preferred) or TMDB_API_KEY.');
@@ -216,9 +223,12 @@ async function addCredits(rows) {
 		target,
 		async (row) => {
 			const detail = await tmdb(`/${row.kind === 'movie' ? 'movie' : 'tv'}/${row.tmdbId}`, {
-				append_to_response: 'credits'
+				// Films carry imdb_id directly; series keep it under external_ids.
+				append_to_response: 'credits,external_ids'
 			});
 			if (!detail) return null;
+
+			row.imdbId = detail.imdb_id || detail.external_ids?.imdb_id || null;
 
 			row.castNames = (detail.credits?.cast ?? [])
 				.slice()
@@ -254,6 +264,19 @@ const rows = [
 
 await addCredits(rows);
 
+let imdbMatched = 0;
+if (!SKIP_IMDB) {
+	try {
+		imdbMatched = await addImdbRatings(rows, {
+			url: process.env.IMDB_RATINGS_URL || IMDB_RATINGS_URL,
+			log: (message) => console.log(message)
+		});
+	} catch (error) {
+		// Nice to have, not worth losing a catalog over.
+		console.warn(`IMDb ratings unavailable (${error.message}); continuing without them.`);
+	}
+}
+
 if (rows.length === 0) {
 	console.error('TMDB returned nothing usable; leaving the existing catalog alone.');
 	process.exit(1);
@@ -285,7 +308,9 @@ const titles = rows.map((t) => ({
 	c: t.castNames.map((p) => intern(people, personIndex, p)),
 	p: t.p,
 	r: t.r,
-	v: t.v
+	v: t.v,
+	...(t.ir ? { ir: t.ir } : {}),
+	...(t.iv ? { iv: t.iv } : {})
 }));
 
 const blurbs = Object.fromEntries(rows.filter((t) => t.o).map((t) => [t.i, t.o]));
@@ -313,7 +338,8 @@ console.log(
 console.log(
 	`catalog.json ${(Buffer.byteLength(json) / 1024 / 1024).toFixed(2)} MB, ` +
 		`blurbs.json ${(Buffer.byteLength(blurbJson) / 1024 / 1024).toFixed(2)} MB, ` +
-		`${titles.filter((t) => t.p).length} with posters, ${titles.filter((t) => t.c.length).length} with cast.`
+		`${titles.filter((t) => t.p).length} with posters, ${titles.filter((t) => t.c.length).length} with cast, ` +
+		`${imdbMatched} with an IMDb rating.`
 );
 console.log(
 	`${requests} TMDB requests in ${elapsed()}s (${throttled} throttled, ${failures} failed)` +

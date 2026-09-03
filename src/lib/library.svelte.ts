@@ -73,6 +73,13 @@ class LibraryStore {
 		this.#persist();
 	}
 
+	/** An assumed rating from onboarding: it steers the picks straight away, but
+	 *  still shows up as something to rate for real. */
+	seedRating(id: string, rating: number) {
+		this.entries[id] = { id, verdict: 'seen', rating, provisional: true, updatedAt: Date.now() };
+		this.#persist();
+	}
+
 	/** Upgrade a plain "not tonight" dismissal into a real veto. */
 	markNever(id: string) {
 		this.entries[id] = { id, verdict: 'dismissed', never: true, updatedAt: Date.now() };
@@ -100,8 +107,9 @@ class LibraryStore {
 		return Object.values(this.entries).filter((e) => e.verdict !== 'skipped').length;
 	}
 
+	/** Seen titles still waiting on a real rating, provisional ones included. */
 	get unratedSeen(): Entry[] {
-		return this.list('seen').filter((e) => !e.rating);
+		return this.list('seen').filter((e) => !e.rating || e.provisional);
 	}
 }
 

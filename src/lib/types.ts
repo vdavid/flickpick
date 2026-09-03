@@ -31,6 +31,9 @@ export interface PackedTitle {
 	/** TMDB vote average (0-10) and vote count. */
 	r: number;
 	v: number;
+	/** IMDb rating and vote count, absent when the title could not be matched. */
+	ir?: number;
+	iv?: number;
 }
 
 /** A catalog entry once unpacked for use. */
@@ -46,6 +49,8 @@ export interface Title {
 	posterPath: string | null;
 	voteAverage: number;
 	voteCount: number;
+	imdbRating: number | null;
+	imdbVotes: number | null;
 	/** Bayesian-shrunk quality score in 0-1, precomputed once at load. */
 	quality: number;
 }
@@ -59,6 +64,10 @@ export interface Entry {
 	verdict: Verdict;
 	/** 1-10 stars, only meaningful for `seen`. */
 	rating?: number;
+	/** The rating was assumed from an onboarding "I loved this" answer rather than
+	 *  given. It seeds the recommender, but the title stays on the to-rate pile
+	 *  until the user says what they actually think. */
+	provisional?: boolean;
 	/** A hard "never show me this kind of thing again", set from the swipe bar. */
 	never?: boolean;
 	updatedAt: number;

@@ -25,6 +25,8 @@ function unpack(packed: PackedTitle, file: CatalogFile, meanRating: number): Tit
 		posterPath: packed.p,
 		voteAverage: packed.r,
 		voteCount: votes,
+		imdbRating: packed.ir ?? null,
+		imdbVotes: packed.iv ?? null,
 		quality:
 			((votes / (votes + VOTE_PRIOR)) * packed.r + (VOTE_PRIOR / (votes + VOTE_PRIOR)) * meanRating) /
 			10
