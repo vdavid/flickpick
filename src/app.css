@@ -1,0 +1,106 @@
+:root {
+	--bg: #0a0a0f;
+	--bg-elevated: #14141d;
+	--surface: #1c1c28;
+	--border: #2a2a3a;
+	--text: #f4f4f8;
+	--muted: #8e8ea6;
+	--accent: #ff3d71;
+
+	--seen: #ffb340;
+	--want: #2ee6a8;
+	--nope: #ff5470;
+
+	--radius: 18px;
+	--tabbar-height: 60px;
+
+	color-scheme: dark;
+	font-family:
+		-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+* {
+	box-sizing: border-box;
+	-webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+	margin: 0;
+	height: 100%;
+	background: var(--bg);
+	color: var(--text);
+	overscroll-behavior: none;
+}
+
+body {
+	/* The deck is drag-driven; browser gesture navigation would fight it. */
+	touch-action: manipulation;
+}
+
+button {
+	font: inherit;
+	color: inherit;
+	border: none;
+	background: none;
+	cursor: pointer;
+}
+
+h1,
+h2,
+h3 {
+	margin: 0;
+	font-weight: 700;
+	letter-spacing: -0.02em;
+}
+
+a {
+	color: inherit;
+}
+
+.page {
+	min-height: 100dvh;
+	padding-bottom: calc(var(--tabbar-height) + env(safe-area-inset-bottom, 0px));
+}
+
+.page-header {
+	padding: 18px 20px 10px;
+}
+
+.page-header h1 {
+	font-size: 26px;
+}
+
+.page-header p {
+	margin: 4px 0 0;
+	color: var(--muted);
+	font-size: 14px;
+}
+
+.empty {
+	margin: 48px 20px;
+	padding: 28px 22px;
+	border: 1px dashed var(--border);
+	border-radius: var(--radius);
+	text-align: center;
+	color: var(--muted);
+}
+
+.empty strong {
+	display: block;
+	margin-bottom: 6px;
+	color: var(--text);
+	font-size: 16px;
+}
+
+.chip {
+	display: inline-block;
+	padding: 3px 9px;
+	border-radius: 999px;
+	background: rgba(255, 255, 255, 0.08);
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.02em;
+	color: var(--muted);
+	white-space: nowrap;
+}
