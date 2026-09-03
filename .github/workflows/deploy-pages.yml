@@ -48,6 +48,9 @@ jobs:
       # credentials are build-time only: what ships is the resulting JSON.
       - name: Rebuild catalog from TMDB
         id: catalog
+        # A healthy run takes about four minutes; the script has its own deadline
+        # and this is the backstop if it ever wedges outright.
+        timeout-minutes: 25
         if: >-
           (github.event_name == 'schedule' || inputs.refresh_catalog) &&
           (env.TMDB_READ_ACCESS_TOKEN != '' || env.TMDB_API_KEY != '')

@@ -5,14 +5,18 @@
  *   TMDB_READ_ACCESS_TOKEN=... npm run catalog
  *   TMDB_API_KEY=... npm run catalog            # v3 key also works
  *
- * Pulls the most-voted films and series (TMDB's discover endpoint sorts by
- * vote_count, which is a far better popularity proxy than vote_average — the
- * latter puts obscure titles with nine 10/10 votes on top), then fetches each
- * title's details and credits so the recommender has directors and cast.
+ * Two passes. The first walks /discover sorted by vote count, which already
+ * carries titles, overviews, posters, years, genre ids and vote counts —
+ * everything except credits. The second fetches credits for each title.
  *
- * Tune the size with CATALOG_MOVIES / CATALOG_SERIES.
+ * The split matters when something goes wrong: if the second pass runs out of
+ * time, the catalog is still complete and only loses cast and director on the
+ * titles it did not reach, instead of losing everything.
  *
- * Nothing here runs in the browser: the key is a build-time secret and what
+ * Size knobs: CATALOG_MOVIES, CATALOG_SERIES, and CATALOG_CREDITS to cap how
+ * many titles get credits (default: all of them).
+ *
+ * Nothing here runs in the browser: the key is a build-time secret, and what
  * ships is the JSON.
  */
 import { writeFile, mkdir } from 'node:fs/promises';
@@ -26,11 +30,21 @@ const TOKEN = process.env.TMDB_READ_ACCESS_TOKEN;
 const API_KEY = process.env.TMDB_API_KEY;
 const WANT_MOVIES = Number(process.env.CATALOG_MOVIES ?? 6000);
 const WANT_SERIES = Number(process.env.CATALOG_SERIES ?? 2000);
+const WANT_CREDITS = Number(process.env.CATALOG_CREDITS ?? Number.POSITIVE_INFINITY);
 
 /** TMDB refuses discover pages past 500, so 10k per query is the hard ceiling. */
 const MAX_PAGE = 500;
 const PER_PAGE = 20;
 const CONCURRENCY = 16;
+/** A ceiling, not a brake: measured runs sit around 45/s without being throttled,
+ *  so this only bites if TMDB gets slower. */
+const REQUESTS_PER_SECOND = 45;
+/** No single request may wedge a worker. */
+const REQUEST_TIMEOUT_MS = 15000;
+/** However long TMDB asks us to wait, never sit idle longer than this. */
+const MAX_RETRY_AFTER_S = 10;
+/** Write out whatever we have rather than running forever. */
+const DEADLINE_MS = Number(process.env.CATALOG_DEADLINE_MS ?? 18 * 60 * 1000);
 /** Below this many votes a title is too obscure to be worth a swipe. */
 const MIN_VOTES = 200;
 const CAST_KEPT = 4;
@@ -40,7 +54,24 @@ if (!TOKEN && !API_KEY) {
 	process.exit(1);
 }
 
+const started = Date.now();
+const elapsed = () => Math.round((Date.now() - started) / 1000);
+const overDeadline = () => Date.now() - started > DEADLINE_MS;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 let requests = 0;
+let throttled = 0;
+let failures = 0;
+
+/** Simple spacing limiter: hand out slots no faster than REQUESTS_PER_SECOND. */
+let nextSlot = 0;
+async function slot() {
+	const gap = 1000 / REQUESTS_PER_SECOND;
+	const now = Date.now();
+	nextSlot = Math.max(now, nextSlot) + gap;
+	const wait = nextSlot - gap - now;
+	if (wait > 0) await sleep(wait);
+}
 
 async function tmdb(path, params = {}) {
 	const url = new URL(`https://api.themoviedb.org/3${path}`);
@@ -51,28 +82,29 @@ async function tmdb(path, params = {}) {
 	const headers = { accept: 'application/json' };
 	if (TOKEN) headers.authorization = `Bearer ${TOKEN}`;
 
-	for (let attempt = 0; attempt < 5; attempt++) {
+	for (let attempt = 0; attempt < 4; attempt++) {
+		await slot();
 		let res;
 		try {
-			res = await fetch(url, { headers });
+			res = await fetch(url, { headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
 		} catch (error) {
-			if (attempt === 4) throw error;
-			await sleep(400 * 2 ** attempt);
+			if (attempt === 3) throw error;
+			await sleep(300 * 2 ** attempt);
 			continue;
 		}
 		requests++;
 
 		if (res.status === 429) {
-			// TMDB tells us how long to hold off; default to a second if it doesn't.
-			const wait = Number(res.headers.get('retry-after') ?? 1);
-			await sleep((wait + 0.5) * 1000);
+			throttled++;
+			const asked = Number(res.headers.get('retry-after') ?? 1);
+			await sleep((Math.min(asked, MAX_RETRY_AFTER_S) + 0.5) * 1000);
 			continue;
 		}
 		if (res.status === 401) throw new Error('TMDB rejected the credentials (401).');
 		if (res.status === 404) return null;
 		if (!res.ok) {
-			if (attempt === 4) throw new Error(`TMDB ${res.status} for ${path}`);
-			await sleep(400 * 2 ** attempt);
+			if (attempt === 3) throw new Error(`TMDB ${res.status} for ${path}`);
+			await sleep(300 * 2 ** attempt);
 			continue;
 		}
 		return res.json();
@@ -80,66 +112,38 @@ async function tmdb(path, params = {}) {
 	throw new Error(`TMDB gave up on ${path}`);
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-/** Run `task` over `items` with a fixed number of workers, in order-independent fashion. */
-async function pooled(items, task, onProgress) {
+/** Run `task` over `items` with a fixed pool of workers. Individual failures are
+ *  counted and skipped: one bad title must not lose the whole build. */
+async function pooled(items, task, label) {
 	const queue = [...items];
-	let done = 0;
 	const results = [];
+	let done = 0;
+
 	await Promise.all(
 		Array.from({ length: CONCURRENCY }, async () => {
 			for (;;) {
 				const item = queue.shift();
 				if (item === undefined) return;
-				const value = await task(item);
-				if (value !== null && value !== undefined) results.push(value);
+				if (overDeadline()) return;
+				try {
+					const value = await task(item);
+					if (value !== null && value !== undefined) results.push(value);
+				} catch {
+					failures++;
+				}
 				done++;
-				if (onProgress && done % 250 === 0) onProgress(done);
+				if (done % 100 === 0) {
+					console.log(`  ${label}: ${done}/${items.length} (${elapsed()}s, ${throttled} throttled)`);
+				}
 			}
 		})
 	);
 	return results;
 }
 
-async function discoverIds(kind, want) {
-	const pages = Math.min(MAX_PAGE, Math.ceil(want / PER_PAGE));
-	const path = kind === 'movie' ? '/discover/movie' : '/discover/tv';
-	const ids = [];
-
-	console.log(`Discovering ${want} ${kind === 'movie' ? 'films' : 'series'} (${pages} pages)...`);
-	const pageNumbers = Array.from({ length: pages }, (_, i) => i + 1);
-
-	const batches = await pooled(pageNumbers, async (page) => {
-		const data = await tmdb(path, {
-			page,
-			sort_by: 'vote_count.desc',
-			'vote_count.gte': MIN_VOTES,
-			include_adult: false,
-			...(kind === 'movie' ? { include_video: false } : {})
-		});
-		return data?.results?.map((r) => r.id) ?? [];
-	});
-
-	for (const batch of batches) ids.push(...batch);
-	return [...new Set(ids)].slice(0, want);
-}
-
-function pickDirectors(kind, detail) {
-	if (kind === 'series') return (detail.created_by ?? []).map((p) => p.name).filter(Boolean);
-	return (detail.credits?.crew ?? [])
-		.filter((c) => c.job === 'Director')
-		.map((c) => c.name)
-		.filter(Boolean);
-}
-
-function pickCast(detail) {
-	return (detail.credits?.cast ?? [])
-		.slice()
-		.sort((a, b) => (a.order ?? 99) - (b.order ?? 99))
-		.slice(0, CAST_KEPT)
-		.map((c) => c.name)
-		.filter(Boolean);
+async function genreNames(kind) {
+	const data = await tmdb(`/genre/${kind === 'movie' ? 'movie' : 'tv'}/list`);
+	return new Map((data?.genres ?? []).map((g) => [g.id, g.name]));
 }
 
 function year(value) {
@@ -147,52 +151,110 @@ function year(value) {
 	return Number.isFinite(parsed) ? parsed : null;
 }
 
-async function fetchTitle(kind, id) {
-	const detail = await tmdb(`/${kind === 'movie' ? 'movie' : 'tv'}/${id}`, {
-		append_to_response: 'credits'
-	});
-	if (!detail) return null;
-
-	const name = kind === 'movie' ? detail.title : detail.name;
-	const start = year(kind === 'movie' ? detail.release_date : detail.first_air_date);
-	if (!name || !start) return null;
-	if (!detail.genres?.length) return null;
-
-	const end = kind === 'series' ? year(detail.last_air_date) : null;
-	return {
-		i: (kind === 'movie' ? 'm' : 't') + id,
-		n: name,
-		y: start,
-		// Only claim an end year for a show TMDB says is finished.
-		...(kind === 'series' && end && detail.status && detail.status !== 'Returning Series'
-			? { e: end }
-			: {}),
-		k: kind === 'movie' ? 0 : 1,
-		genreNames: detail.genres.map((g) => g.name),
-		directorNames: pickDirectors(kind, detail),
-		castNames: pickCast(detail),
-		p: detail.poster_path ?? null,
-		o: (detail.overview ?? '').trim(),
-		r: Math.round((detail.vote_average ?? 0) * 10) / 10,
-		v: detail.vote_count ?? 0
-	};
-}
-
-async function collect(kind, want) {
+/** Pass one: everything discover already knows. */
+async function discover(kind, want, genres) {
 	if (want <= 0) return [];
-	const ids = await discoverIds(kind, want);
-	console.log(`  ${ids.length} ids; fetching details and credits...`);
-	const titles = await pooled(
-		ids,
-		(id) => fetchTitle(kind, id).catch(() => null),
-		(done) => console.log(`  ${done}/${ids.length}`)
+	const pages = Math.min(MAX_PAGE, Math.ceil(want / PER_PAGE));
+	const path = kind === 'movie' ? '/discover/movie' : '/discover/tv';
+	console.log(`Discovering ${want} ${kind === 'movie' ? 'films' : 'series'} over ${pages} pages...`);
+
+	const batches = await pooled(
+		Array.from({ length: pages }, (_, i) => i + 1),
+		async (page) => {
+			const data = await tmdb(path, {
+				page,
+				sort_by: 'vote_count.desc',
+				'vote_count.gte': MIN_VOTES,
+				include_adult: false,
+				...(kind === 'movie' ? { include_video: false } : {})
+			});
+			return data?.results ?? [];
+		},
+		`${kind} pages`
 	);
-	console.log(`  kept ${titles.length}`);
-	return titles;
+
+	const seen = new Set();
+	const rows = [];
+	for (const batch of batches) {
+		for (const r of batch) {
+			const name = kind === 'movie' ? r.title : r.name;
+			const start = year(kind === 'movie' ? r.release_date : r.first_air_date);
+			const names = (r.genre_ids ?? []).map((id) => genres.get(id)).filter(Boolean);
+			if (!name || !start || names.length === 0 || seen.has(r.id)) continue;
+			seen.add(r.id);
+			rows.push({
+				tmdbId: r.id,
+				kind,
+				i: (kind === 'movie' ? 'm' : 't') + r.id,
+				n: name,
+				y: start,
+				k: kind === 'movie' ? 0 : 1,
+				genreNames: names,
+				directorNames: [],
+				castNames: [],
+				p: r.poster_path ?? null,
+				o: (r.overview ?? '').trim(),
+				r: Math.round((r.vote_average ?? 0) * 10) / 10,
+				v: r.vote_count ?? 0
+			});
+		}
+	}
+	console.log(`  kept ${rows.length} (${elapsed()}s)`);
+	return rows.slice(0, want);
 }
 
-const started = Date.now();
-const rows = [...(await collect('movie', WANT_MOVIES)), ...(await collect('series', WANT_SERIES))];
+/** Pass two: credits, and for series the creators and end year, for the top slice. */
+async function addCredits(rows) {
+	const target = Number.isFinite(WANT_CREDITS) ? rows.slice(0, WANT_CREDITS) : rows;
+	if (target.length === 0) return;
+	console.log(`Fetching credits for ${target.length} titles...`);
+
+	await pooled(
+		target,
+		async (row) => {
+			const detail = await tmdb(`/${row.kind === 'movie' ? 'movie' : 'tv'}/${row.tmdbId}`, {
+				append_to_response: 'credits'
+			});
+			if (!detail) return null;
+
+			row.castNames = (detail.credits?.cast ?? [])
+				.slice()
+				.sort((a, b) => (a.order ?? 99) - (b.order ?? 99))
+				.slice(0, CAST_KEPT)
+				.map((c) => c.name)
+				.filter(Boolean);
+
+			if (row.kind === 'series') {
+				row.directorNames = (detail.created_by ?? []).map((p) => p.name).filter(Boolean);
+				const end = year(detail.last_air_date);
+				// Only claim an end year for a show TMDB says is finished.
+				if (end && detail.status && detail.status !== 'Returning Series') row.e = end;
+			} else {
+				row.directorNames = (detail.credits?.crew ?? [])
+					.filter((c) => c.job === 'Director')
+					.map((c) => c.name)
+					.filter(Boolean);
+			}
+			return row;
+		},
+		'credits'
+	);
+	console.log(`  done (${elapsed()}s)`);
+}
+
+const [movieGenres, tvGenres] = await Promise.all([genreNames('movie'), genreNames('tv')]);
+
+const rows = [
+	...(await discover('movie', WANT_MOVIES, movieGenres)),
+	...(await discover('series', WANT_SERIES, tvGenres))
+].sort((a, b) => b.v - a.v);
+
+await addCredits(rows);
+
+if (rows.length === 0) {
+	console.error('TMDB returned nothing usable; leaving the existing catalog alone.');
+	process.exit(1);
+}
 
 // Intern the strings that repeat across thousands of rows.
 const genres = [];
@@ -209,26 +271,15 @@ const intern = (table, index, value) => {
 	return at;
 };
 
-const titles = rows
-	.map(({ genreNames, directorNames, castNames, ...rest }) => ({
-		...rest,
-		g: genreNames.map((g) => intern(genres, genreIndex, g)),
-		d: directorNames.slice(0, 2).map((p) => intern(people, personIndex, p)),
-		c: castNames.map((p) => intern(people, personIndex, p))
-	}))
-	// Most-voted first, so a cold profile still opens on something recognisable.
-	.sort((a, b) => b.v - a.v);
-
-// Key order matters for the packed rows; rebuild each one in the documented shape.
-const packed = titles.map((t) => ({
+const titles = rows.map((t) => ({
 	i: t.i,
 	n: t.n,
 	y: t.y,
 	...(t.e ? { e: t.e } : {}),
 	k: t.k,
-	g: t.g,
-	d: t.d,
-	c: t.c,
+	g: t.genreNames.map((g) => intern(genres, genreIndex, g)),
+	d: t.directorNames.slice(0, 2).map((p) => intern(people, personIndex, p)),
+	c: t.castNames.map((p) => intern(people, personIndex, p)),
 	p: t.p,
 	o: t.o,
 	r: t.r,
@@ -241,19 +292,23 @@ const catalog = {
 	source: 'TMDB',
 	genres,
 	people,
-	titles: packed
+	titles
 };
 
 await mkdir(dirname(OUT), { recursive: true });
-await writeFile(OUT, JSON.stringify(catalog));
+const json = JSON.stringify(catalog);
+await writeFile(OUT, json);
 
-const bytes = Buffer.byteLength(JSON.stringify(catalog));
 console.log(
-	`\nWrote ${packed.length} titles (${packed.filter((t) => t.k === 0).length} films, ` +
-		`${packed.filter((t) => t.k === 1).length} series), ` +
-		`${genres.length} genres, ${people.length} people.`
+	`\nWrote ${titles.length} titles (${titles.filter((t) => t.k === 0).length} films, ` +
+		`${titles.filter((t) => t.k === 1).length} series), ${genres.length} genres, ` +
+		`${people.length} people.`
 );
 console.log(
-	`${(bytes / 1024 / 1024).toFixed(2)} MB raw, ${packed.filter((t) => t.p).length} with posters, ` +
-		`${requests} TMDB requests in ${Math.round((Date.now() - started) / 1000)}s.`
+	`${(Buffer.byteLength(json) / 1024 / 1024).toFixed(2)} MB, ` +
+		`${titles.filter((t) => t.p).length} with posters, ${titles.filter((t) => t.c.length).length} with cast.`
+);
+console.log(
+	`${requests} TMDB requests in ${elapsed()}s (${throttled} throttled, ${failures} failed)` +
+		(overDeadline() ? ' — stopped at the deadline.' : '.')
 );
