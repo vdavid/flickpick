@@ -55,7 +55,9 @@
 	});
 
 	function formatVotes(votes: number): string {
-		return votes >= 1000 ? `${Math.round(votes / 1000)}k` : String(votes);
+		if (votes >= 1_000_000) return `${(votes / 1_000_000).toFixed(1)}M`;
+		if (votes >= 1000) return `${Math.round(votes / 1000)}k`;
+		return String(votes);
 	}
 
 	let results = $derived.by(() => {
