@@ -1,7 +1,7 @@
 <script lang="ts">
 	import TitleRow from '$lib/components/TitleRow.svelte';
 	import StarRating from '$lib/components/StarRating.svelte';
-	import { getTitle } from '$lib/catalog';
+	import { catalog } from '$lib/catalog.svelte';
 	import { library } from '$lib/library.svelte';
 	import type { Verdict } from '$lib/types';
 
@@ -17,7 +17,7 @@
 	let items = $derived(
 		library
 			.list(tab)
-			.map((entry) => ({ entry, title: getTitle(entry.id) }))
+			.map((entry) => ({ entry, title: catalog.byId.get(entry.id) }))
 			.filter((item) => item.title !== undefined)
 	);
 </script>
@@ -40,7 +40,10 @@
 	{#if items.length}
 		<div class="list">
 			{#each items as item (item.entry.id)}
-				<TitleRow title={item.title!} note={item.title!.blurb}>
+				<TitleRow
+					title={item.title!}
+					note={item.entry.never ? "Never show this again" : item.title!.blurb}
+				>
 					{#snippet trailing()}
 						{#if tab === 'seen'}
 							<div class="row-stars">
@@ -77,6 +80,11 @@
 			{tabs.find((t) => t.key === tab)?.empty}
 		</div>
 	{/if}
+
+	<p class="attribution">
+		Title data and posters from <a href="https://www.themoviedb.org/" rel="noreferrer">TMDB</a>.
+		This product uses the TMDB API but is not endorsed or certified by TMDB.
+	</p>
 
 	{#if library.decided > 0}
 		<div class="reset">
@@ -141,8 +149,20 @@
 		margin-top: 6px;
 	}
 
+	.attribution {
+		padding: 24px 20px 0;
+		color: var(--muted);
+		font-size: 11px;
+		line-height: 1.5;
+		text-align: center;
+	}
+
+	.attribution a {
+		color: var(--muted);
+	}
+
 	.reset {
-		padding: 26px 20px 34px;
+		padding: 18px 20px 34px;
 		text-align: center;
 		color: var(--muted);
 		font-size: 13px;

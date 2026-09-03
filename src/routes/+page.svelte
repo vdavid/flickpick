@@ -1,51 +1,78 @@
 <script lang="ts">
 	import SwipeCard from '$lib/components/SwipeCard.svelte';
+	import Onboarding from '$lib/components/Onboarding.svelte';
 	import { library } from '$lib/library.svelte';
-	import { buildProfile, rankUndecided, type Scored } from '$lib/recommend';
-	import { catalog } from '$lib/catalog';
+	import { catalog } from '$lib/catalog.svelte';
+	import { buildProfile } from '$lib/taste';
+	import { buildDeck, type Pick } from '$lib/deck';
 	import type { Verdict } from '$lib/types';
 	import { base } from '$app/paths';
 
-	const QUEUE_SIZE = 24;
-	const REFILL_BELOW = 6;
+	const QUEUE_SIZE = 18;
+	const REFILL_BELOW = 5;
+	const ONBOARDED_KEY = 'flickpick.onboarded.v1';
 
-	let queue = $state<Scored[]>([]);
+	let queue = $state<Pick[]>([]);
 	let cards = $state<SwipeCard[]>([]);
-	let undoStack = $state<string[]>([]);
+	let last = $state<{ id: string; title: string; verdict: Verdict } | null>(null);
+	let showOnboarding = $state(false);
 
-	/** Re-rank the remaining titles against the current taste profile. We do this in
-	 *  batches rather than after every swipe so the cards behind the top one stay put. */
+	// Only offer the picker to someone with nothing on file who hasn't dismissed it.
+	try {
+		showOnboarding = library.decided === 0 && localStorage.getItem(ONBOARDED_KEY) === null;
+	} catch {
+		showOnboarding = library.decided === 0;
+	}
+
+	/** Rebuild against the current taste profile. Done in batches rather than after
+	 *  every swipe, so the cards behind the top one stay where they are. */
 	function refill() {
-		const ranked = rankUndecided(library.entries, buildProfile(library.entries));
-		const seenIds = new Set(queue.map((s) => s.title.id));
-		const additions = ranked.filter((s) => !seenIds.has(s.title.id));
+		const profile = buildProfile(library.entries);
+		const known = new Set(queue.map((p) => p.title.id));
+		const additions = buildDeck(library.entries, profile, { size: QUEUE_SIZE }).filter(
+			(p) => !known.has(p.title.id)
+		);
 		queue = [...queue, ...additions].slice(0, QUEUE_SIZE);
 	}
 
 	$effect(() => {
-		if (queue.length === 0) refill();
+		if (!showOnboarding && queue.length === 0) refill();
 	});
 
 	function decide(verdict: Verdict) {
 		const top = queue[0];
 		if (!top) return;
 		library.set(top.title.id, verdict);
-		undoStack = [...undoStack, top.title.id];
+		last = { id: top.title.id, title: top.title.title, verdict };
 		queue = queue.slice(1);
 		if (queue.length < REFILL_BELOW) refill();
 	}
 
 	function undo() {
-		const id = undoStack.at(-1);
-		if (!id) return;
-		undoStack = undoStack.slice(0, -1);
-		library.remove(id);
-		const title = catalog.find((t) => t.id === id);
-		if (title) queue = [{ title, score: 0, reasons: [] }, ...queue];
+		if (!last) return;
+		library.remove(last.id);
+		const title = catalog.byId.get(last.id);
+		if (title) queue = [{ title, score: 0, reasons: [], wildcard: false }, ...queue];
+		last = null;
+	}
+
+	function never() {
+		if (!last) return;
+		library.markNever(last.id);
+		last = null;
+	}
+
+	function finishOnboarding() {
+		try {
+			localStorage.setItem(ONBOARDED_KEY, '1');
+		} catch {
+			// Private mode; the picker will just offer itself again next time.
+		}
+		showOnboarding = false;
 	}
 
 	function onKeydown(event: KeyboardEvent) {
-		if (event.metaKey || event.ctrlKey || event.altKey) return;
+		if (showOnboarding || event.metaKey || event.ctrlKey || event.altKey) return;
 		const map: Record<string, Verdict> = {
 			ArrowLeft: 'dismissed',
 			ArrowRight: 'watchlist',
@@ -61,62 +88,82 @@
 		}
 	}
 
-	let progress = $derived(library.decided);
+	let verdictWord = $derived(
+		last?.verdict === 'watchlist'
+			? 'Watchlisted'
+			: last?.verdict === 'seen'
+				? 'Marked seen'
+				: 'Buried'
+	);
 </script>
 
 <svelte:window onkeydown={onKeydown} />
 
-<div class="page discover">
-	<header>
-		<div>
-			<h1>Flick<span>Pick</span></h1>
-			<p>Swipe. Rate. Discover your next obsession.</p>
-		</div>
-		<span class="progress">{progress}/{catalog.length}</span>
-	</header>
-
-	<div class="deck">
-		{#each queue.slice(0, 3) as scored, i (scored.title.id)}
-			<SwipeCard
-				bind:this={cards[i]}
-				title={scored.title}
-				reasons={i === 0 ? scored.reasons : []}
-				depth={i}
-				interactive={i === 0}
-				onDecide={decide}
-			/>
-		{/each}
-
-		{#if queue.length === 0}
-			<div class="done">
-				<strong>That's the whole catalog.</strong>
-				<p>You've filed all {catalog.length} titles. Rate what you've seen to sharpen the picks.</p>
-				<a href="{base}/rate">Go rate →</a>
+{#if showOnboarding}
+	<Onboarding onDone={finishOnboarding} />
+{:else}
+	<div class="page discover">
+		<header>
+			<div>
+				<h1>Flick<span>Pick</span></h1>
+				<p>Swipe. Rate. Discover your next obsession.</p>
 			</div>
+			<span class="progress">{library.decided}/{catalog.titles.length}</span>
+		</header>
+
+		<div class="deck">
+			{#each queue.slice(0, 3) as pick, i (pick.title.id)}
+				<SwipeCard
+					bind:this={cards[i]}
+					title={pick.title}
+					reasons={i === 0 ? pick.reasons : []}
+					wildcard={pick.wildcard}
+					depth={i}
+					interactive={i === 0}
+					onDecide={decide}
+				/>
+			{/each}
+
+			{#if queue.length === 0}
+				<div class="done">
+					<strong>That's everything.</strong>
+					<p>You've filed all {catalog.titles.length} titles. Rate what you've seen to sharpen the picks.</p>
+					<a href="{base}/rate">Go rate →</a>
+				</div>
+			{/if}
+		</div>
+
+		<div class="actions">
+			<button class="act nope" onclick={() => cards[0]?.fling('dismissed')} aria-label="Not interested" disabled={!queue.length}>
+				<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></svg>
+			</button>
+			<button class="act seen" onclick={() => cards[0]?.fling('seen')} aria-label="Already seen it" disabled={!queue.length}>
+				<svg viewBox="0 0 24 24"><path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6-10-6-10-6z" /><circle cx="12" cy="12" r="2.6" /></svg>
+			</button>
+			<button class="act want" onclick={() => cards[0]?.fling('watchlist')} aria-label="Add to watchlist" disabled={!queue.length}>
+				<svg viewBox="0 0 24 24"><path d="M6 3h12v18l-6-4.2L6 21z" /></svg>
+			</button>
+		</div>
+
+		{#if last}
+			<div class="lastbar">
+				<span class="what">{verdictWord} <b>{last.title}</b></span>
+				<div>
+					{#if last.verdict === 'dismissed'}
+						<button onclick={never}>Never again</button>
+					{/if}
+					<button onclick={undo}>Undo</button>
+				</div>
+			</div>
+		{:else}
+			<p class="legend">
+				<span style:color="var(--nope)">← Not for me</span>
+				<span style:color="var(--seen)">↑ Seen it</span>
+				<span style:color="var(--want)">Watchlist →</span>
+			</p>
 		{/if}
 	</div>
-
-	<div class="actions">
-		<button class="act nope" onclick={() => cards[0]?.fling('dismissed')} aria-label="Not interested" disabled={!queue.length}>
-			<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></svg>
-		</button>
-		<button class="act undo" onclick={undo} aria-label="Undo last swipe" disabled={!undoStack.length}>
-			<svg viewBox="0 0 24 24"><path d="M9 14l-4-4 4-4" /><path d="M5 10h8a5 5 0 0 1 0 10h-2" /></svg>
-		</button>
-		<button class="act seen" onclick={() => cards[0]?.fling('seen')} aria-label="Already seen it" disabled={!queue.length}>
-			<svg viewBox="0 0 24 24"><path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6-10-6-10-6z" /><circle cx="12" cy="12" r="2.6" /></svg>
-		</button>
-		<button class="act want" onclick={() => cards[0]?.fling('watchlist')} aria-label="Add to watchlist" disabled={!queue.length}>
-			<svg viewBox="0 0 24 24"><path d="M6 3h12v18l-6-4.2L6 21z" /></svg>
-		</button>
-	</div>
-
-	<p class="legend">
-		<span style:color="var(--nope)">← Not for me</span>
-		<span style:color="var(--seen)">↑ Seen it</span>
-		<span style:color="var(--want)">Watchlist →</span>
-	</p>
-</div>
+{/if}
 
 <style>
 	.discover {
@@ -163,7 +210,7 @@
 		position: relative;
 		flex: 1;
 		min-height: 0;
-		margin-bottom: 14px;
+		margin-bottom: 12px;
 	}
 
 	.done {
@@ -202,7 +249,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		gap: 14px;
+		gap: 18px;
 		padding-bottom: 8px;
 	}
 
@@ -237,17 +284,6 @@
 		stroke-linejoin: round;
 	}
 
-	.act.undo {
-		width: 46px;
-		height: 46px;
-		color: var(--muted);
-	}
-
-	.act.undo svg {
-		width: 20px;
-		height: 20px;
-	}
-
 	.act.nope {
 		color: var(--nope);
 	}
@@ -260,11 +296,43 @@
 		color: var(--want);
 	}
 
-	.legend {
+	.legend,
+	.lastbar {
 		display: flex;
+		align-items: center;
 		justify-content: space-between;
-		margin: 0 6px 6px;
+		gap: 10px;
+		min-height: 30px;
+		margin: 0 4px 6px;
 		font-size: 11px;
 		font-weight: 600;
+	}
+
+	.lastbar .what {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		color: var(--muted);
+		font-weight: 500;
+	}
+
+	.lastbar b {
+		color: var(--text);
+	}
+
+	.lastbar div {
+		display: flex;
+		flex: none;
+		gap: 6px;
+	}
+
+	.lastbar button {
+		padding: 5px 10px;
+		border: 1px solid var(--border);
+		border-radius: 999px;
+		font-size: 11px;
+		font-weight: 600;
+		color: var(--muted);
 	}
 </style>

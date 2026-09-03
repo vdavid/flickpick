@@ -1,22 +1,25 @@
 <script lang="ts">
 	import { placeholderGradient } from '$lib/poster';
+	import { posterUrl } from '$lib/catalog.svelte';
 	import type { Title } from '$lib/types';
 
 	interface Props {
 		title: Title;
-		/** Where the generated fallback art puts its type treatment.
-		 *  `card` keeps it clear of the swipe card's own title block. */
+		/** Picks both the fallback layout and the TMDB image size to request. */
 		variant?: 'card' | 'detail' | 'thumb';
 		eager?: boolean;
 	}
 
 	let { title, variant = 'detail', eager = false }: Props = $props();
 
-	// If OMDb hands us a broken URL, fall back to the generated art rather than
-	// showing a torn-image icon.
+	// A broken image falls back to the generated art rather than a torn-image icon.
 	let failed = $state(false);
-	let src = $derived(failed ? null : title.poster);
+	$effect(() => {
+		title.id;
+		failed = false;
+	});
 
+	let src = $derived(failed ? null : posterUrl(title, variant === 'thumb' ? 'w185' : 'w500'));
 	let kind = $derived(title.type === 'series' ? 'Series' : 'Film');
 </script>
 
@@ -69,7 +72,7 @@
 		padding: 8% 8% 12%;
 	}
 
-	/* Sits in the upper-middle of the card: clear of the swipe stamps above and of
+	/* Sits in the upper-middle of a swipe card: clear of the stamps above and of
 	   the card's own title block below. */
 	.fallback.top {
 		justify-content: center;

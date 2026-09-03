@@ -1,7 +1,40 @@
 export type TitleType = 'movie' | 'series';
 
-/** A catalog entry. Everything except `poster`/`imdbId` ships in the repo;
- *  those two are filled in by `npm run enrich` from OMDb. */
+/** The compact on-the-wire catalog. Genre and person names are interned into
+ *  shared tables and referenced by index, which roughly halves the payload. */
+export interface CatalogFile {
+	version: 2;
+	generatedAt: string;
+	source: string;
+	genres: string[];
+	people: string[];
+	titles: PackedTitle[];
+}
+
+/** Short keys, because this is repeated thousands of times. */
+export interface PackedTitle {
+	/** "m<tmdbId>" for a film, "t<tmdbId>" for a series. Stable across rebuilds. */
+	i: string;
+	n: string;
+	y: number;
+	/** Series end year, absent while running. */
+	e?: number;
+	/** 0 = movie, 1 = series. */
+	k: 0 | 1;
+	g: number[];
+	/** Directors (films) or creators (series). */
+	d: number[];
+	/** Top-billed cast. */
+	c: number[];
+	/** TMDB poster path, e.g. "/abc123.jpg". Null when TMDB has no art. */
+	p: string | null;
+	o: string;
+	/** TMDB vote average (0-10) and vote count. */
+	r: number;
+	v: number;
+}
+
+/** A catalog entry once unpacked for use. */
 export interface Title {
 	id: string;
 	title: string;
@@ -9,21 +42,16 @@ export interface Title {
 	endYear?: number;
 	type: TitleType;
 	genres: string[];
-	/** Director for movies, creator(s) for series. May list several, comma separated. */
-	director: string;
+	directors: string[];
 	cast: string[];
 	blurb: string;
-	/** Override the OMDb search term when the catalog title doesn't match theirs. */
-	omdbQuery?: string;
-	/** Editorial 0-100 prominence used to order the deck before we know any taste. */
-	buzz: number;
-	poster?: string | null;
-	imdbId?: string | null;
-	runtime?: string | null;
-	imdbRating?: number | null;
+	posterPath: string | null;
+	voteAverage: number;
+	voteCount: number;
+	/** Bayesian-shrunk quality score in 0-1, precomputed once at load. */
+	quality: number;
 }
 
-/** What the user did with a title. */
 export type Verdict = 'seen' | 'watchlist' | 'dismissed';
 
 export interface Entry {
@@ -31,7 +59,8 @@ export interface Entry {
 	verdict: Verdict;
 	/** 1-5 stars, only meaningful for `seen`. */
 	rating?: number;
-	/** ms epoch of the last change. */
+	/** A hard "never show me this kind of thing again", set from the swipe bar. */
+	never?: boolean;
 	updatedAt: number;
 }
 

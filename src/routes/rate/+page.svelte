@@ -2,7 +2,7 @@
 	import Poster from '$lib/components/Poster.svelte';
 	import StarRating from '$lib/components/StarRating.svelte';
 	import TitleRow from '$lib/components/TitleRow.svelte';
-	import { catalog, getTitle, yearLabel } from '$lib/catalog';
+	import { catalog, yearLabel } from '$lib/catalog.svelte';
 	import { library } from '$lib/library.svelte';
 
 	let tab = $state<'todo' | 'rated'>('todo');
@@ -12,7 +12,7 @@
 		library
 			.list('seen')
 			.filter((e) => !e.rating)
-			.map((e) => getTitle(e.id))
+			.map((e) => catalog.byId.get(e.id))
 			.filter((t) => t !== undefined)
 	);
 
@@ -20,7 +20,7 @@
 		library
 			.list('seen')
 			.filter((e) => e.rating)
-			.map((e) => ({ title: getTitle(e.id), rating: e.rating! }))
+			.map((e) => ({ title: catalog.byId.get(e.id), rating: e.rating! }))
 			.filter((r) => r.title !== undefined)
 	);
 
@@ -29,9 +29,13 @@
 	let results = $derived.by(() => {
 		const q = query.trim().toLowerCase();
 		if (q.length < 2) return [];
-		return catalog
-			.filter((t) => t.title.toLowerCase().includes(q) && library.verdictOf(t.id) !== 'seen')
-			.slice(0, 8);
+		const hits = [];
+		for (const t of catalog.titles) {
+			if (t.title.toLowerCase().includes(q) && library.verdictOf(t.id) !== 'seen') hits.push(t);
+			// The catalog runs to thousands of titles; stop as soon as the list is full.
+			if (hits.length === 8) break;
+		}
+		return hits;
 	});
 </script>
 
@@ -82,7 +86,7 @@
 			<div class="focus">
 				<div class="art"><Poster title={current} eager /></div>
 				<h2>{current.title}</h2>
-				<p class="sub">{yearLabel(current)} · {current.genres.join(', ')}</p>
+				<p class="sub">{yearLabel(current)} · {current.genres.slice(0, 3).join(', ')}</p>
 				<StarRating
 					value={0}
 					size={40}

@@ -14,8 +14,7 @@ A mobile-first way to work through films and series:
 ## Status
 
 This is the **demo stage**: a static SvelteKit app with no backend. Everything
-lives in `localStorage` on the device you are using, and the catalog is a curated
-seed list of 115 titles that ships in the repo.
+lives in `localStorage` on the device you are using.
 
 The planned production shape is a Go API with Postgres and Google sign-in behind
 `flickpick.veszelovszki.com`, so each person sees only their own lists. See
@@ -28,87 +27,95 @@ npm install
 npm run dev      # http://localhost:5173
 ```
 
-Other scripts:
-
 | Command | What it does |
 | --- | --- |
 | `npm run build` | Static build into `build/` |
 | `npm run preview` | Serve that build locally |
 | `npm run check` | Type-check and lint the Svelte components |
-| `npm run enrich` | Fetch posters from OMDb into the catalog (needs a key) |
+| `npm run catalog` | Rebuild `static/catalog.json` from TMDB (needs a key) |
 
-## Posters (OMDb)
+## The catalog
 
-The catalog ships without poster URLs, and the app draws its own cover art in the
-meantime — deterministic per title, so it looks intentional rather than broken.
-
-To get real posters, [grab a free OMDb key](https://www.omdbapi.com/apikey.aspx) and:
+`static/catalog.json` is committed, so the app runs with no network beyond
+poster images and ordinary pushes deploy in seconds. `scripts/build-catalog.mjs`
+regenerates it from TMDB:
 
 ```bash
-cp .env.example .env      # put the key in OMDB_API_KEY
-OMDB_API_KEY=xxxxxxx npm run enrich
+TMDB_READ_ACCESS_TOKEN=... npm run catalog
+CATALOG_MOVIES=6000 CATALOG_SERIES=2000 npm run catalog   # tune the size
 ```
 
-That resolves every seed title by name and writes `poster`, `imdbId`, `imdbRating`
-and `runtime` back into `src/lib/data/catalog.json`. Titles it cannot match are
-printed at the end; give those an `"omdbQuery"` field in the catalog and rerun.
+It pulls the most-voted films and series from `/discover` (vote count is a far
+better popularity proxy than vote average, which floats obscure titles with nine
+10/10 votes to the top), then fetches each one's details and credits so the
+recommender has directors and cast to work with.
 
-**The key is a build-time secret and never reaches the browser** — what ships is the
-resulting JSON. In CI the same thing happens from the `OMDB_API_KEY` repository
-secret, so you can also just set the secret and let the deploy do it.
+The file interns genre and person names into shared tables and refers to them by
+index, which roughly halves the payload. The app fetches it at runtime rather
+than bundling it, so the shell paints before the catalog arrives.
 
-OMDb has no browse or discover endpoint, only lookup by title or IMDb id. That is
-why the deck is seeded from a curated list in the repo rather than pulled live.
+CI rebuilds it on a weekly schedule, or on a manual run with **Rebuild catalog
+from TMDB** ticked, and commits the result. The TMDB credentials are build-time
+only — what ships to the browser is the JSON.
 
-## Deployment
+### Why not OMDb
 
-Pushing to `main` (or the current demo branch) builds the app and publishes it to
-GitHub Pages via `.github/workflows/deploy-pages.yml`.
-
-**One-time setup, needed once before the first deploy can succeed:**
-
-**Settings → Pages → Build and deployment → Source: GitHub Actions.**
-
-This cannot be automated. The workflow does pass `enablement: true` to
-`actions/configure-pages`, but creating a Pages site needs `administration: write`
-and `GITHUB_TOKEN` cannot be granted that scope, so the step fails with
-`Resource not accessible by integration` until the switch is flipped by hand.
-Once Pages is on, that step becomes a no-op and every push deploys.
-
-Optional: add a repository secret named `OMDB_API_KEY` under **Settings → Secrets
-and variables → Actions**. With it set, the deploy bakes in real posters.
-
-The demo then lives at `https://<owner>.github.io/flickpick/`. The workflow passes
-`BASE_PATH=/flickpick` so all links and assets resolve under that subpath.
+OMDb can only look a title up by IMDb id or by name, plus a keyword search over
+titles. It has no genre filter, no sort by rating or popularity, no person
+search, no "similar titles" endpoint, and the free key allows 1,000 requests a
+day. It cannot power a discovery feed. TMDB's `/discover` does exactly that, and
+serves posters from a free CDN.
 
 ## How the recommendations work
 
-Everything is content-based and runs in the browser — no model, no server, and it
-works from a handful of ratings.
+Everything is content-based and runs in the browser — no server, no shared data,
+and it works from a handful of ratings.
 
-1. Each library entry gets a weight: a 5★ rating is `+1`, 3★ is `0`, 1★ is `-1`,
-   a watchlist swipe `+0.5`, a plain "seen" `+0.3`, a dismissal `-0.6`.
-2. That weight is spread across the title's features: each genre, the director,
-   each of the top-billed cast, the decade, and the type.
-3. Features are damped by how common they are in the catalog, so sharing a
-   director says far more than both being a Drama.
-4. Candidates are scored by summing the features they match, normalised for how
-   many features they have, plus a small popularity prior so a cold profile still
-   orders sensibly.
+**The signals.** Each library entry carries a weight: a 5★ rating is `+1`, 3★ is
+`0`, 1★ is `-1`, a watchlist swipe `+0.5`, a plain "seen" `+0.25`. A left swipe is
+only `-0.35`, because it usually means "not tonight"; the **Never again** button
+on the swipe bar turns it into a real `-1.2` veto.
 
-The Discover deck is ranked the same way, so the further you swipe the more the
-deck bends toward your taste. It re-ranks in batches of 24 rather than after every
-swipe, so the cards behind the top one do not jump around.
+**The features.** Each weight spreads across the title's genres, directors,
+top-billed cast and decade, damped by how common each feature is across the whole
+catalog — sharing a director says far more than both being a Drama.
+
+**The learned part.** Those four groups are scored separately, and a small
+logistic regression fitted on the user's own swipes decides how much each group
+should count. Someone who follows directors and someone who follows actors get
+genuinely different rankings. Each training example is scored against a profile
+with that example *removed*, so the fit is judged on generalisation rather than on
+recall, and the learned weights are blended toward sensible defaults until there
+are about forty examples to go on.
+
+**The deck.** Pure greedy ranking collapses into one director within a dozen
+swipes, so the picker also:
+
+- samples from the best few candidates rather than always taking the top one,
+- applies maximal marginal relevance, penalising a card that echoes what is
+  already in the deck,
+- reserves about a fifth of the deck for **wildcards** drawn from outside the
+  shortlist entirely (restricted to the better half by rating, so "different"
+  never means "bad"). These are badged *Something different*.
+
+A Bayesian-shrunk quality prior from TMDB's vote average and count keeps a 9.8
+with 210 votes from outranking an 8.6 with 30,000, and gives a cold profile a
+sensible order to start from.
+
+New users get a "which of these did you love?" grid instead of swiping blind, so
+the model starts with real positives rather than only learning from rejections.
 
 ## Layout
 
 ```
-src/lib/data/catalog.json    the seed catalog (115 titles)
+static/catalog.json          the catalog, fetched at runtime
+scripts/build-catalog.mjs    TMDB -> catalog.json
+src/lib/catalog.svelte.ts    loading, unpacking, and the feature index
+src/lib/taste.ts             taste profile, the learned weights, explanations
+src/lib/deck.ts              exploration, diversity, wildcards
 src/lib/library.svelte.ts    the user's library — the one module a backend would replace
-src/lib/recommend.ts         taste profile and scoring
-src/lib/components/          SwipeCard, Poster, TitleRow, StarRating, TabBar
+src/lib/components/          SwipeCard, Poster, TitleRow, StarRating, TabBar, Onboarding
 src/routes/                  Discover (/), Rate, Lists, For You
-scripts/enrich-catalog.mjs   OMDb poster fetcher
 ```
 
 ## Roadmap
@@ -121,5 +128,10 @@ The demo deliberately stops short of the full product. What is still to build:
   row scoped to a user id.
 - **Hetzner deployment** — Docker Compose (app + Postgres + Caddy for TLS) behind
   `flickpick.veszelovszki.com`, deployed over SSH from GitHub Actions.
-- **A live catalog** — OMDb resolves titles but cannot browse them, so a bigger
-  catalog needs either a much longer seed list or a source with a discover endpoint.
+- **Collaborative filtering** — "people who liked this also liked" needs many
+  users, so it only becomes possible once the app has real traffic. Until then
+  the content-based model is the right tool.
+
+## Attribution
+
+This product uses the TMDB API but is not endorsed or certified by TMDB.

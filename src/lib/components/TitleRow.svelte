@@ -1,6 +1,6 @@
 <script lang="ts">
 	import Poster from './Poster.svelte';
-	import { yearLabel } from '$lib/catalog';
+	import { yearLabel } from '$lib/catalog.svelte';
 	import type { Title } from '$lib/types';
 	import type { Snippet } from 'svelte';
 

@@ -58,8 +58,13 @@ class LibraryStore {
 	}
 
 	rate(id: string, rating: number) {
-		const prev = this.entries[id];
-		this.entries[id] = { id, verdict: 'seen', rating, updatedAt: Date.now(), ...(prev ? {} : {}) };
+		this.entries[id] = { id, verdict: 'seen', rating, updatedAt: Date.now() };
+		this.#persist();
+	}
+
+	/** Upgrade a plain "not tonight" dismissal into a real veto. */
+	markNever(id: string) {
+		this.entries[id] = { id, verdict: 'dismissed', never: true, updatedAt: Date.now() };
 		this.#persist();
 	}
 

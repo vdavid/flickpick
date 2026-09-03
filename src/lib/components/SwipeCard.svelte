@@ -1,13 +1,14 @@
 <script lang="ts">
 	import Poster from './Poster.svelte';
-	import { yearLabel } from '$lib/catalog';
-	import type { Title } from '$lib/types';
-	import type { Verdict } from '$lib/types';
-	import type { Reason } from '$lib/recommend';
+	import { yearLabel } from '$lib/catalog.svelte';
+	import type { Title, Verdict } from '$lib/types';
+	import type { Reason } from '$lib/taste';
 
 	interface Props {
 		title: Title;
 		reasons?: Reason[];
+		/** Shown with a badge, so a deliberate left-field pick doesn't read as a bad one. */
+		wildcard?: boolean;
 		/** Only the top card of the stack listens to pointers. */
 		interactive?: boolean;
 		/** Depth in the stack (0 = top), used for the scale/offset of the cards behind. */
@@ -15,7 +16,8 @@
 		onDecide: (verdict: Verdict) => void;
 	}
 
-	let { title, reasons = [], interactive = true, depth = 0, onDecide }: Props = $props();
+	let { title, reasons = [], wildcard = false, interactive = true, depth = 0, onDecide }: Props =
+		$props();
 
 	const THRESHOLD = 88;
 	const FLY_MS = 240;
@@ -111,6 +113,7 @@
 
 	<div class="meta">
 		<div class="tags">
+			{#if wildcard}<span class="chip wild">Something different</span>{/if}
 			<span class="chip">{title.type === 'series' ? 'Series' : 'Film'}</span>
 			<span class="chip">{yearLabel(title)}</span>
 			{#each title.genres.slice(0, 2) as genre}
@@ -119,7 +122,9 @@
 		</div>
 		<h2>{title.title}</h2>
 		<p class="blurb">{title.blurb}</p>
-		<p class="credit">{title.director} · {title.cast.slice(0, 2).join(', ')}</p>
+		<p class="credit">
+			{[title.directors.join(', '), title.cast.slice(0, 2).join(', ')].filter(Boolean).join(' · ')}
+		</p>
 		{#if reasons.length}
 			<p class="why">
 				{#each reasons as reason, i}
@@ -205,6 +210,11 @@
 		margin: 8px 0 0;
 		font-size: 12px;
 		color: var(--muted);
+	}
+
+	.chip.wild {
+		background: rgba(255, 179, 64, 0.16);
+		color: var(--seen);
 	}
 
 	.why {

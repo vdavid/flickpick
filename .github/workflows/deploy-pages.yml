@@ -5,10 +5,18 @@ on:
     branches:
       - main
       - claude/tinder-film-series-app-0mwku5
+  # Rebuild the catalog from TMDB once a week so new releases show up.
+  schedule:
+    - cron: '17 4 * * 1'
   workflow_dispatch:
+    inputs:
+      refresh_catalog:
+        description: 'Rebuild static/catalog.json from TMDB before deploying'
+        type: boolean
+        default: false
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -21,7 +29,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      OMDB_API_KEY: ${{ secrets.OMDB_API_KEY }}
+      TMDB_READ_ACCESS_TOKEN: ${{ secrets.TMDB_READ_ACCESS_TOKEN }}
+      TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
     steps:
       - uses: actions/checkout@v4
 
@@ -34,12 +43,28 @@ jobs:
 
       - run: npm run check
 
-      # Posters are baked into the catalog at build time, so the API key never
-      # reaches the browser. Skipped when the secret isn't set; the app then
-      # falls back to its generated cover art.
-      - name: Bake OMDb posters into the catalog
-        if: env.OMDB_API_KEY != ''
-        run: npm run enrich
+      # The catalog is committed, so ordinary pushes deploy in seconds. It is only
+      # rebuilt on the weekly schedule or when a manual run asks for it. The TMDB
+      # credentials are build-time only: what ships is the resulting JSON.
+      - name: Rebuild catalog from TMDB
+        id: catalog
+        if: >-
+          (github.event_name == 'schedule' || inputs.refresh_catalog) &&
+          (env.TMDB_READ_ACCESS_TOKEN != '' || env.TMDB_API_KEY != '')
+        run: npm run catalog
+
+      - name: Commit the refreshed catalog
+        if: steps.catalog.outcome == 'success' && github.event_name != 'pull_request'
+        run: |
+          if git diff --quiet -- static/catalog.json; then
+            echo "Catalog unchanged."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add static/catalog.json
+          git commit -m "Refresh catalog from TMDB"
+          git push origin HEAD:${{ github.ref_name }}
 
       - name: Build
         env:
@@ -48,8 +73,7 @@ jobs:
 
       # enablement only works where the job token may change repository settings.
       # GITHUB_TOKEN cannot be granted `administration: write`, so on this repo
-      # Pages has to be switched on once by hand (see the README); afterwards this
-      # step is a no-op that just reads the site config back.
+      # Pages had to be switched on by hand once; this now just reads it back.
       - uses: actions/configure-pages@v5
         with:
           enablement: true

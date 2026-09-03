@@ -1,34 +1,43 @@
 <script lang="ts">
 	import TitleRow from '$lib/components/TitleRow.svelte';
 	import { library } from '$lib/library.svelte';
-	import { buildProfile, rankUndecided } from '$lib/recommend';
+	import { catalog } from '$lib/catalog.svelte';
+	import { buildProfile, spreadReasons, topTastes, type Reason } from '$lib/taste';
+	import { recommendations } from '$lib/deck';
 	import { base } from '$app/paths';
 	import type { TitleType } from '$lib/types';
 
 	let filter = $state<TitleType | 'all'>('all');
 
 	let profile = $derived(buildProfile(library.entries));
+	let tastes = $derived(topTastes(profile));
 
+	// Ask for extra so the type filter still has something to show.
 	let picks = $derived(
-		rankUndecided(library.entries, profile)
-			.filter((s) => filter === 'all' || s.title.type === filter)
-			.slice(0, 20)
+		spreadReasons(
+			recommendations(library.entries, profile, 60).filter(
+				(p) => filter === 'all' || p.title.type === filter
+			)
+		)
 	);
 
-	/** The strongest things we learned, shown so the picks don't feel like a black box. */
-	let topTastes = $derived(
-		[...profile.value.entries()]
-			.filter(([feature, weight]) => weight > 0.4 && !feature.startsWith('type:') && !feature.startsWith('decade:'))
-			.sort((a, b) => b[1] - a[1])
-			.slice(0, 6)
-			.map(([feature]) => feature.slice(feature.indexOf(':') + 1))
-	);
+	/** What the model decided matters most to this user, once it has enough to go on. */
+	let learned = $derived.by(() => {
+		if (profile.confidence < 0.25) return null;
+		const groups = [
+			{ key: 'director', label: 'who directs it' },
+			{ key: 'cast', label: 'who is in it' },
+			{ key: 'genre', label: 'the genre' },
+			{ key: 'decade', label: 'the era' }
+		] as const;
+		const ranked = groups
+			.map((g) => ({ ...g, weight: profile.weights[g.key] }))
+			.sort((a, b) => b.weight - a.weight);
+		return ranked[0].weight > ranked[1].weight * 1.15 ? ranked[0].label : null;
+	});
 
-	function reasonText(reasons: { label: string; because?: string }[]): string {
-		if (!reasons.length) return '';
-		return reasons
-			.map((r) => (r.because ? `${r.label}, like ${r.because}` : r.label))
-			.join(' · ');
+	function reasonText(reasons: Reason[]): string {
+		return reasons.map((r) => (r.because ? `${r.label}, like ${r.because}` : r.label)).join(' · ');
 	}
 </script>
 
@@ -37,7 +46,8 @@
 		<h1>For You</h1>
 		<p>
 			{#if profile.ratedCount >= 3}
-				Built from {profile.ratedCount} rating{profile.ratedCount === 1 ? '' : 's'} and {profile.signalCount} swipes.
+				Built from {profile.ratedCount} rating{profile.ratedCount === 1 ? '' : 's'} and {profile.signalCount}
+				swipes{#if learned}, and you seem to care most about <strong>{learned}</strong>{/if}.
 			{:else}
 				Rate a few titles and this list stops guessing.
 			{/if}
@@ -52,10 +62,10 @@
 		</div>
 	{/if}
 
-	{#if topTastes.length}
+	{#if tastes.length}
 		<div class="tastes">
 			<span class="chip">Your taste</span>
-			{#each topTastes as taste}
+			{#each tastes as taste}
 				<span class="taste">{taste}</span>
 			{/each}
 		</div>
@@ -76,7 +86,7 @@
 
 	{#if picks.length}
 		<div class="list">
-			{#each picks as pick, i (pick.title.id)}
+			{#each picks.slice(0, 25) as pick (pick.title.id)}
 				<TitleRow
 					title={pick.title}
 					note={reasonText(pick.reasons) || pick.title.blurb}
@@ -99,9 +109,15 @@
 			You have filed every title in this filter.
 		</div>
 	{/if}
+
+	<p class="count">{catalog.titles.length.toLocaleString()} titles in the catalog</p>
 </div>
 
 <style>
+	.page-header strong {
+		color: var(--text);
+	}
+
 	.tastes {
 		display: flex;
 		flex-wrap: wrap;
@@ -143,7 +159,7 @@
 	}
 
 	.list {
-		padding: 0 20px 26px;
+		padding: 0 20px 4px;
 	}
 
 	.cta {
@@ -154,5 +170,12 @@
 		color: var(--accent);
 		font-weight: 600;
 		text-decoration: none;
+	}
+
+	.count {
+		padding: 16px 20px 28px;
+		color: var(--muted);
+		font-size: 11px;
+		text-align: center;
 	}
 </style>
